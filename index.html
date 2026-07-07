@@ -486,7 +486,7 @@ function AuthGate({ children }) {
   );
 }
 
-function App({ onRelock, uid, email }) {
+function App({ onRelock, uid: userid, email }) {
   const [patients, setPatients] = useState(null);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
@@ -513,7 +513,7 @@ function App({ onRelock, uid, email }) {
     (async () => {
       try {
         const fb = await waitForFb();
-        const ref = fb.doc(fb.db, "users", uid);
+        const ref = fb.doc(fb.db, "users", userUid);
         unsub = fb.onSnapshot(
           ref,
           (snap) => {
@@ -534,13 +534,13 @@ function App({ onRelock, uid, email }) {
       }
     })();
     return () => unsub();
-  }, [uid]);
+  }, [userUid]);
 
   function addSessionType(newType) {
     setSessionTypes((prev) => {
       if (prev.includes(newType)) return prev;
       const next = [...prev, newType];
-      waitForFb().then((fb) => fb.setDoc(fb.doc(fb.db, "users", uid), { sessionTypes: next }, { merge: true })).catch(() => {});
+      waitForFb().then((fb) => fb.setDoc(fb.doc(fb.db, "users", userUid), { sessionTypes: next }, { merge: true })).catch(() => {});
       return next;
     });
   }
@@ -549,12 +549,12 @@ function App({ onRelock, uid, email }) {
     setPatients(next);
     try {
       const fb = await waitForFb();
-      await fb.setDoc(fb.doc(fb.db, "users", uid), { patients: next }, { merge: true });
+      await fb.setDoc(fb.doc(fb.db, "users", userUid), { patients: next }, { merge: true });
     } catch {
       setError("שמירת הנתונים נכשלה. בדקי חיבור לאינטרנט ונסי שוב.");
       setTimeout(() => setError(null), 3000);
     }
-  }, [uid]);
+  }, [userUid]);
 
   const selectedPatient = useMemo(() => (patients || []).find((p) => p.id === selectedId) || null, [patients, selectedId]);
   const filteredPatients = useMemo(() => {
@@ -767,7 +767,7 @@ function App({ onRelock, uid, email }) {
           onMerge={(mergedPatients, mergedTypes) => {
             persist(mergedPatients);
             setSessionTypes(mergedTypes);
-            waitForFb().then((fb) => fb.setDoc(fb.doc(fb.db, "users", uid), { sessionTypes: mergedTypes }, { merge: true })).catch(() => {});
+            waitForFb().then((fb) => fb.setDoc(fb.doc(fb.db, "users", userUid), { sessionTypes: mergedTypes }, { merge: true })).catch(() => {});
           }}
           onClose={() => setShowBackupModal(false)}
         />
