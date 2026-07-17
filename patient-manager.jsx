@@ -28,6 +28,9 @@
  *      "פרטי מרפאה" (שם מותאם אישית), "הדפסה" (שורת סיום מודפסת), ו"מייל" (תבנית נושא/גוף/חתימה + בחירת
  *      חשבון Gmail) חדשות בהגדרות; לשונית "אודות" עם גרסה/תאריך/יוצרים. חתימה דיגיטלית/צפייה במסמך חתום
  *      רלוונטיות רק לגרסת ה-HTML (sign.html) — בקובץ הזה מסמכים נשארים בסטטוס "נשלח" בלבד.
+ * 2.6  תיקון באג משמעותי: פגישות מתגלגלות שהתאריך שלהן עבר בלי שסומנו כהתקיימו/בוטלו נעלמו לצמיתות מכרטיס
+ *      המטופל. history ממזג כעת גם pendingOccurrences (וירטואליות, בעבר) עם כפתור "עדכון פגישה" שפותח
+ *      את הטופס ממולא מראש. זהה בדיוק לתיקון בגרסת ה-HTML.
  */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
@@ -141,7 +144,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.5";
+const APP_VERSION = "2.6";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 
@@ -1046,7 +1049,14 @@ function btnPrimary(extra) {
 function PatientDetail({ patient, onBack, onEdit, onDelete, onAddSession, onAddSessionAt, onEditSession, onDeleteSession, onCancelOccurrence, onEditRecurring, onAddDocument, logoUrl, clinicSettings }) {
   const t = todayStr();
   const sessions = [...(patient.sessions || [])].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
-  const history = sessions.filter((s) => s.status !== "scheduled" || s.date < t);
+  const realHistory = sessions.filter((s) => s.status !== "scheduled" || s.date < t);
+  const lookbackStart = patient.createdAt ? patient.createdAt.slice(0, 10) : fmtDate(new Date(new Date().setDate(new Date().getDate() - 365)));
+  const pendingOccurrences = patient.recurring && patient.recurring.enabled
+    ? getOccurrencesInRange(patient, lookbackStart, t)
+        .filter((o) => o.virtual && o.status === "scheduled" && o.date < t)
+        .map((o) => ({ ...o, pendingVirtual: true, id: `v-${o.date}-${o.time}` }))
+    : [];
+  const history = [...realHistory, ...pendingOccurrences].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
   const [showFile, setShowFile] = useState(false);
 
   const future = new Date(); future.setDate(future.getDate() + 60);
@@ -1169,6 +1179,32 @@ function PatientDetail({ patient, onBack, onEdit, onDelete, onAddSession, onAddS
           <div style={{ color: COLORS.muted, fontSize: 14, padding: "10px 0" }}>אין עדיין פגישות מתועדות.</div>
         )}
         {history.map((s, i) => {
+          if (s.pendingVirtual) {
+            return (
+              <div key={s.id} style={{ display: "flex", gap: 12, position: "relative" }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 14 }}>
+                  <div style={{ width: 9, height: 9, borderRadius: "50%", background: COLORS.clay, marginTop: 5, flexShrink: 0 }} />
+                  {i < history.length - 1 && <div style={{ width: 2, flex: 1, background: COLORS.border, marginTop: 2 }} />}
+                </div>
+                <div style={{ flex: 1, paddingBottom: 18, background: "#FDF4EC", border: `1px solid ${COLORS.clay}55`, borderRadius: 8, padding: "8px 12px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                    <span style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                      <AlertCircle size={14} color={COLORS.clay} />
+                      {formatHeDate(s.date)} · {s.time}
+                      <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.clay }}>(פגישה קבועה — טרם עודכנה)</span>
+                    </span>
+                    <button onClick={() => onAddSessionAt(s.date, s.time, s.type, s.duration)}
+                      style={{ ...btnPrimary(), width: "auto", padding: "5px 12px", fontSize: 12.5 }}>
+                      עדכון פגישה
+                    </button>
+                  </div>
+                  <p style={{ margin: "4px 0 0", fontSize: 12.5, color: COLORS.muted }}>
+                    פגישה מתגלגלת שהתאריך שלה עבר ולא סומנה כהתקיימה/בוטלה. לחצי "עדכון פגישה" כדי לתעד מה קרה.
+                  </p>
+                </div>
+              </div>
+            );
+          }
           const cancelled = s.status === "cancelled";
           const completed = s.status === "completed";
           return (
