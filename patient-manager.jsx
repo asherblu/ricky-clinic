@@ -40,6 +40,11 @@
  * 2.9  תיקון באג: הטאב ספר רק פגישות מתגלגלות וירטואליות, ופספס פגישות אמיתיות (patient.sessions) שנשארו
  *      scheduled אחרי שהתאריך עבר. נוספה getUnresolvedOccurrences(patient, t) שמאחדת את שני המקורות.
  *      זהה בדיוק לתיקון בגרסת ה-HTML.
+ * 2.10 שינוי ארכיטקטוני: נוסף מנגנון "חומרה" (materialization) — בכל טעינה, כל פגישה מתגלגלת שהתאריך שלה
+ *      עבר הופכת אוטומטית לרשומת session אמיתית וקבועה (status="scheduled"), לא נשארת וירטואלית/מחושבת.
+ *      כרטיס המטופל מסמן גם פגישות אמיתיות "טרם עודכנו" באותו עיצוב מודגש. ייצוא היומן (generateICSMultiple)
+ *      עבר לקובץ ICS יחיד עם כל הפגישות העתידיות (עד שנה קדימה). זהה בדיוק לתיקון בגרסת ה-HTML (לוקאלי
+ *      בלבד — window.storage, ללא Firestore).
  */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
@@ -112,6 +117,26 @@ function generateICS(patientName, dateStr, timeStr, notes, duration) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+function generateICSMultiple(events) {
+  if (!events || events.length === 0) return;
+  const fmt = (dt) => dt.getFullYear() + pad(dt.getMonth() + 1) + pad(dt.getDate()) + "T" + pad(dt.getHours()) + pad(dt.getMinutes()) + "00";
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Patient Manager//HE"];
+  events.forEach((ev) => {
+    const [y, m, d] = ev.date.split("-").map(Number);
+    const [hh, mm] = (ev.time || "09:00").split(":").map(Number);
+    const start = new Date(y, m - 1, d, hh, mm);
+    const end = new Date(start.getTime() + (ev.duration || DEFAULT_SESSION_DURATION) * 60000);
+    lines.push("BEGIN:VEVENT", "UID:" + uid() + "@patient-manager", "DTSTAMP:" + fmt(new Date()), "DTSTART:" + fmt(start), "DTEND:" + fmt(end),
+      "SUMMARY:פגישה עם " + ev.patientName, "DESCRIPTION:" + (ev.notes || "").replace(/\n/g, "\\n"), "END:VEVENT");
+  });
+  lines.push("END:VCALENDAR");
+  const blob = new Blob([lines.join("\r\n")], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `פגישות-עתידיות-${todayStr()}.ics`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 function googleCalendarUrl(patientName, dateStr, timeStr, notes, duration) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const [hh, mm] = (timeStr || "09:00").split(":").map(Number);
@@ -153,7 +178,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.9";
+const APP_VERSION = "2.10";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 
@@ -659,6 +684,24 @@ function AppInner({ onRelock }) {
       setTimeout(() => setError(null), 3000);
     }
   }, []);
+
+  // "חומרה" (materialization): פגישה מתגלגלת שהתאריך שלה עבר הופכת מווירטואלית לרשומת session אמיתית וקבועה,
+  // כדי שלא תישכח אם ההגדרה הקבועה תשתנה בעתיד. רץ אוטומטית בכל טעינת נתונים; אינו לולאה אינסופית כי אחרי
+  // שנוצרה רשומה אמיתית, getPendingOccurrences כבר לא מוצאת שם מה להוסיף.
+  useEffect(() => {
+    if (!patients) return;
+    const t = todayStr();
+    let changed = false;
+    const now = new Date().toISOString();
+    const next = patients.map((p) => {
+      const missing = getPendingOccurrences(p, t);
+      if (missing.length === 0) return p;
+      changed = true;
+      const newSessions = missing.map((o) => ({ id: uid(), date: o.date, time: o.time, status: "scheduled", type: o.type, duration: o.duration, notes: "", price: p.sessionRate || 0, updatedAt: now }));
+      return { ...p, sessions: [...(p.sessions || []), ...newSessions], updatedAt: now };
+    });
+    if (changed) persist(next);
+  }, [patients, persist]);
 
   const selectedPatient = useMemo(
     () => (patients || []).find((p) => p.id === selectedId) || null,
@@ -1243,18 +1286,21 @@ function PatientDetail({ patient, onBack, onEdit, onDelete, onAddSession, onAddS
           }
           const cancelled = s.status === "cancelled";
           const completed = s.status === "completed";
+          const needsAttention = s.status === "scheduled" && s.date < t;
           return (
             <div key={s.id} style={{ display: "flex", gap: 12, position: "relative" }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 14 }}>
-                <div style={{ width: 9, height: 9, borderRadius: "50%", background: cancelled ? COLORS.danger : completed ? COLORS.success : COLORS.border, marginTop: 5, flexShrink: 0 }} />
+                <div style={{ width: 9, height: 9, borderRadius: "50%", background: needsAttention ? COLORS.clay : cancelled ? COLORS.danger : completed ? COLORS.success : COLORS.border, marginTop: 5, flexShrink: 0 }} />
                 {i < history.length - 1 && <div style={{ width: 2, flex: 1, background: COLORS.border, marginTop: 2 }} />}
               </div>
-              <div style={{ flex: 1, paddingBottom: 18 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ flex: 1, paddingBottom: 18, ...(needsAttention ? { background: "#FDF4EC", border: `1px solid ${COLORS.clay}55`, borderRadius: 8, padding: "8px 12px" } : {}) }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
                   <span style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 6, textDecoration: cancelled ? "line-through" : "none", color: cancelled ? COLORS.danger : COLORS.text }}>
+                    {needsAttention && <AlertCircle size={14} color={COLORS.clay} />}
                     {completed && <CheckCircle2 size={14} color={COLORS.success} />}
                     {formatHeDate(s.date)} · {s.time}
                     {cancelled && <span style={{ fontSize: 11, fontWeight: 700 }}>({s.charged ? "בוטלה בחיוב" : "בוטלה"})</span>}
+                    {needsAttention && <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.clay }}>(טרם עודכנה)</span>}
                     {s.type && <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.muted, background: COLORS.bg, borderRadius: 10, padding: "1px 8px" }}>{s.type}</span>}
                   </span>
                   <div style={{ display: "flex", gap: 4 }}>
@@ -2488,9 +2534,19 @@ function CalendarView({ patients, calMonth, setCalMonth, onPickPatient, logoUrl,
     return list.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 8);
   }, [patients]);
 
+  const allUpcoming = useMemo(() => {
+    const future = new Date(); future.setDate(future.getDate() + 365);
+    const rangeEnd = fmtDate(future);
+    const list = [];
+    (patients || []).forEach((p) => {
+      getOccurrencesInRange(p, t, rangeEnd).forEach((o) => { if (o.status === "scheduled") list.push({ ...o, patientId: p.id, patientName: p.name }); });
+    });
+    return list.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  }, [patients, t]);
+
   function exportAll() {
-    if (upcoming.length === 0) return;
-    upcoming.forEach((s) => generateICS(s.patientName, s.date, s.time, s.virtual ? "" : s.session.notes, s.duration));
+    if (allUpcoming.length === 0) return;
+    generateICSMultiple(allUpcoming.map((s) => ({ patientName: s.patientName, date: s.date, time: s.time, duration: s.duration, notes: s.virtual ? "" : s.session.notes })));
   }
 
   return (
@@ -2505,8 +2561,8 @@ function CalendarView({ patients, calMonth, setCalMonth, onPickPatient, logoUrl,
           <button onClick={() => setShowPrintModal(true)} style={{ ...btnPrimary(), width: "auto", background: "transparent", color: COLORS.primary, border: `1px solid ${COLORS.border}` }}>
             <Printer size={15} /> הדפסה
           </button>
-          <button onClick={exportAll} style={{ ...btnPrimary(), width: "auto", background: "transparent", color: COLORS.primary, border: `1px solid ${COLORS.border}` }}>
-            <Download size={15} /> ייצוא הפגישות הקרובות ליומן
+          <button onClick={exportAll} title="קובץ ICS יחיד עם כל הפגישות העתידיות — לייבוא חד-פעמי ל-Google Calendar" style={{ ...btnPrimary(), width: "auto", background: "transparent", color: COLORS.primary, border: `1px solid ${COLORS.border}` }}>
+            <Download size={15} /> ייצוא כל הפגישות ליומן
           </button>
         </div>
       </div>

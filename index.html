@@ -73,6 +73,13 @@ CHANGELOG (patient-manager.jsx / patient-manager.html — must stay in sync)
      "פגישה קבועה") שנשארו status=scheduled אחרי שהתאריך עבר — מה שגרם לספירת חסר משמעותית. נוספה
      getUnresolvedOccurrences(patient, t) שמאחדת את שני המקורות; הטאב וה-badge משתמשים בה כעת. לחיצה על
      "עדכון פגישה" עבור פגישה אמיתית פותחת אותה לעריכה (לא יוצרת רשומה כפולה כמו שקורה לוירטואליות).
+2.10 שינוי ארכיטקטוני בעקבות משוב: הספירה עדיין לא הייתה מדויקת כי היא הסתמכה על "זיכרון" מחושב (וירטואלי)
+     שיכול ללכת לאיבוד (למשל אם הגדרת פגישה קבועה משתנה). נוסף מנגנון "חומרה" (materialization) — בכל טעינת
+     האפליקציה, כל פגישה מתגלגלת שהתאריך שלה עבר הופכת אוטומטית לרשומת session אמיתית וקבועה ב-Firestore
+     (status="scheduled"), ולא נשארת וירטואלית/מחושבת. כרטיס המטופל מסמן גם פגישות אמיתיות "שטרם עודכנו"
+     (status=scheduled ותאריך שעבר) באותו עיצוב מודגש כמו הוירטואליות לשעבר — כדי שלא "יבלעו" בהיסטוריה.
+     בנוסף: כפתור "ייצוא כל הפגישות ליומן" בדף היומן משתמש כעת ב-generateICSMultiple — קובץ ICS יחיד עם כל
+     הפגישות העתידיות (עד שנה קדימה, לא רק 8 הקרובות), לייבוא חד-פעמי ל-Google Calendar במקום קובץ לכל פגישה.
 -->
 <html lang="he" dir="rtl">
 <head>
@@ -235,7 +242,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.9";
+const APP_VERSION = "2.10";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 const DEFAULT_SESSION_DURATION = 60; // minutes — 50 min session + 10 min buffer, editable per session/recurring slot
@@ -387,6 +394,27 @@ function generateICS(patientName, dateStr, timeStr, notes, duration) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = `פגישה-${patientName}-${dateStr}.ics`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function generateICSMultiple(events) {
+  // קובץ ICS יחיד עם כמה VEVENT — כדי לייבא את כל הפגישות ל-Google Calendar בפעולה אחת, במקום קובץ לכל פגישה.
+  if (!events || events.length === 0) return;
+  const fmt = (dt) => dt.getFullYear() + pad(dt.getMonth() + 1) + pad(dt.getDate()) + "T" + pad(dt.getHours()) + pad(dt.getMinutes()) + "00";
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Patient Manager//HE"];
+  events.forEach((ev) => {
+    const [y, m, d] = ev.date.split("-").map(Number);
+    const [hh, mm] = (ev.time || "09:00").split(":").map(Number);
+    const start = new Date(y, m - 1, d, hh, mm);
+    const end = new Date(start.getTime() + (ev.duration || DEFAULT_SESSION_DURATION) * 60000);
+    lines.push("BEGIN:VEVENT", "UID:" + uid() + "@patient-manager", "DTSTAMP:" + fmt(new Date()), "DTSTART:" + fmt(start), "DTEND:" + fmt(end),
+      "SUMMARY:פגישה עם " + ev.patientName, "DESCRIPTION:" + (ev.notes || "").replace(/\n/g, "\\n"), "END:VEVENT");
+  });
+  lines.push("END:VCALENDAR");
+  const blob = new Blob([lines.join("\r\n")], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `פגישות-עתידיות-${todayStr()}.ics`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
@@ -773,6 +801,25 @@ function App({ onRelock, uid: userUid, email }) {
     }
   }, [userUid]);
 
+  // "חומרה" (materialization): פגישה מתגלגלת שהתאריך שלה עבר הופכת מווירטואלית (מחושבת מחדש בכל טעינה) לרשומת
+  // session אמיתית וקבועה ב-Firestore, ברגע שהיא נוצרת פעם אחת אי אפשר "לאבד" אותה יותר (למשל אם ההגדרה
+  // הקבועה תשתנה בעתיד). רץ אוטומטית בכל טעינת נתונים; ברגע שנוצרה רשומה אמיתית, הריצה הבאה לא מוצאת מה
+  // להוסיף יותר לאותו תאריך (getPendingOccurrences מחריגה תאריכים עם רשומה אמיתית קיימת) — לא לולאה אינסופית.
+  useEffect(() => {
+    if (!patients) return;
+    const t = todayStr();
+    let changed = false;
+    const now = new Date().toISOString();
+    const next = patients.map((p) => {
+      const missing = getPendingOccurrences(p, t);
+      if (missing.length === 0) return p;
+      changed = true;
+      const newSessions = missing.map((o) => ({ id: uid(), date: o.date, time: o.time, status: "scheduled", type: o.type, duration: o.duration, notes: "", price: p.sessionRate || 0, updatedAt: now }));
+      return { ...p, sessions: [...(p.sessions || []), ...newSessions], updatedAt: now };
+    });
+    if (changed) persist(next);
+  }, [patients, persist]);
+
   const selectedPatient = useMemo(() => (patients || []).find((p) => p.id === selectedId) || null, [patients, selectedId]);
   const filteredPatients = useMemo(() => {
     if (!patients) return [];
@@ -1141,6 +1188,7 @@ function PatientDetail({ patient, onBack, onEdit, onDelete, onAddSession, onAddS
         {history.length === 0 && occurrences.length === 0 && <div style={{ color: COLORS.muted, fontSize: 14, padding: "10px 0" }}>אין עדיין פגישות מתועדות.</div>}
         {history.map((s, i) => {
           if (s.pendingVirtual) {
+            // מצב מעבר בלבד — ברוב המקרים "חומרה" (materialization) הופכת את זה לרשומה אמיתית תוך שנייה מהטעינה.
             return (
               <div key={s.id} style={{ display: "flex", gap: 12, position: "relative" }}>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 14 }}>
@@ -1168,18 +1216,21 @@ function PatientDetail({ patient, onBack, onEdit, onDelete, onAddSession, onAddS
           }
           const cancelled = s.status === "cancelled";
           const completed = s.status === "completed";
+          const needsAttention = s.status === "scheduled" && s.date < t;
           return (
             <div key={s.id} style={{ display: "flex", gap: 12, position: "relative" }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 14 }}>
-                <div style={{ width: 9, height: 9, borderRadius: "50%", background: cancelled ? COLORS.danger : completed ? COLORS.success : COLORS.border, marginTop: 5, flexShrink: 0 }} />
+                <div style={{ width: 9, height: 9, borderRadius: "50%", background: needsAttention ? COLORS.clay : cancelled ? COLORS.danger : completed ? COLORS.success : COLORS.border, marginTop: 5, flexShrink: 0 }} />
                 {i < history.length - 1 && <div style={{ width: 2, flex: 1, background: COLORS.border, marginTop: 2 }} />}
               </div>
-              <div style={{ flex: 1, paddingBottom: 18 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ flex: 1, paddingBottom: 18, ...(needsAttention ? { background: "#FDF4EC", border: `1px solid ${COLORS.clay}55`, borderRadius: 8, padding: "8px 12px" } : {}) }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
                   <span style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 6, textDecoration: cancelled ? "line-through" : "none", color: cancelled ? COLORS.danger : COLORS.text }}>
+                    {needsAttention && <Icon name="alert" size={14} color={COLORS.clay} />}
                     {completed && <Icon name="check" size={14} color={COLORS.success} />}
                     {formatHeDate(s.date)} · {s.time}
                     {cancelled && <span style={{ fontSize: 11, fontWeight: 700 }}>({s.charged ? "בוטלה בחיוב" : "בוטלה"})</span>}
+                    {needsAttention && <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.clay }}>(טרם עודכנה)</span>}
                     {s.type && <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.muted, background: COLORS.bg, borderRadius: 10, padding: "1px 8px" }}>{s.type}</span>}
                   </span>
                   <div style={{ display: "flex", gap: 4 }}>
@@ -2310,9 +2361,20 @@ function CalendarView({ patients, calMonth, setCalMonth, onPickPatient, logoUrl,
     return list.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 8);
   }, [patients]);
 
+  // כל הפגישות העתידיות (לא רק תצוגת ה-8 הקרובות למעלה) — לייצוא מרוכז ל-ICS יחיד לייבוא ל-Google Calendar.
+  const allUpcoming = useMemo(() => {
+    const future = new Date(); future.setDate(future.getDate() + 365);
+    const rangeEnd = fmtDate(future);
+    const list = [];
+    (patients || []).forEach((p) => {
+      getOccurrencesInRange(p, t, rangeEnd).forEach((o) => { if (o.status === "scheduled") list.push({ ...o, patientId: p.id, patientName: p.name }); });
+    });
+    return list.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  }, [patients, t]);
+
   function exportAll() {
-    if (upcoming.length === 0) return;
-    upcoming.forEach((s) => generateICS(s.patientName, s.date, s.time, s.virtual ? "" : s.session.notes, s.duration));
+    if (allUpcoming.length === 0) return;
+    generateICSMultiple(allUpcoming.map((s) => ({ patientName: s.patientName, date: s.date, time: s.time, duration: s.duration, notes: s.virtual ? "" : s.session.notes })));
   }
 
   return (
@@ -2325,7 +2387,7 @@ function CalendarView({ patients, calMonth, setCalMonth, onPickPatient, logoUrl,
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setShowPrintModal(true)} style={{ ...btnPrimary(), width: "auto", background: "transparent", color: COLORS.primary, border: `1px solid ${COLORS.border}` }}><Icon name="printer" size={15} /> הדפסה</button>
-          <button onClick={exportAll} style={{ ...btnPrimary(), width: "auto", background: "transparent", color: COLORS.primary, border: `1px solid ${COLORS.border}` }}><Icon name="download" size={15} /> ייצוא הפגישות הקרובות ליומן</button>
+          <button onClick={exportAll} title="קובץ ICS יחיד עם כל הפגישות העתידיות — לייבוא חד-פעמי ל-Google Calendar" style={{ ...btnPrimary(), width: "auto", background: "transparent", color: COLORS.primary, border: `1px solid ${COLORS.border}` }}><Icon name="download" size={15} /> ייצוא כל הפגישות ליומן</button>
         </div>
       </div>
 
