@@ -34,6 +34,9 @@
  * 2.7  תיקון באג: todayStr() חישבה "היום" לפי UTC, בעוד fmtDate() (יצירת תאריכי הפגישות המתגלגלות) לפי
  *      שעון מקומי — פער של עד יום שלם בלילה (00:00-03:00 בישראל) גרם לפגישות מתגלגלות "ליפול בין הכיסאות".
  *      todayStr הוחלפה ל-fmtDate(new Date()). זהה בדיוק לתיקון בגרסת ה-HTML.
+ * 2.8  פיצ'ר חדש: טאב "ממתינות לסגירה" (PendingClosuresView) — מרכז את כל הפגישות המתגלגלות שעברו בלי
+ *      סימון, מכל המטופלים, למקום אחד, עם badge מספרי ליד שם הטאב. חילוץ getPendingOccurrences(patient, t)
+ *      לפונקציה משותפת. זהה בדיוק לתיקון בגרסת ה-HTML.
  */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
@@ -147,7 +150,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.7";
+const APP_VERSION = "2.8";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 
@@ -174,6 +177,14 @@ function getOccurrencesInRange(patient, startDate, endDate) {
     }
   }
   return results.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+}
+
+function getPendingOccurrences(patient, t) {
+  if (!(patient.recurring && patient.recurring.enabled)) return [];
+  const lookbackStart = patient.createdAt ? patient.createdAt.slice(0, 10) : fmtDate(new Date(new Date().setDate(new Date().getDate() - 365)));
+  return getOccurrencesInRange(patient, lookbackStart, t)
+    .filter((o) => o.virtual && o.status === "scheduled" && o.date < t)
+    .map((o) => ({ ...o, pendingVirtual: true, id: `v-${o.date}-${o.time}` }));
 }
 
 function timeToMinutes(t) {
@@ -513,6 +524,10 @@ function AppInner({ onRelock }) {
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [activeTab, setActiveTab] = useState("patients");
+  const pendingClosuresCount = useMemo(() => {
+    const t = todayStr();
+    return (patients || []).reduce((a, p) => a + getPendingOccurrences(p, t).length, 0);
+  }, [patients]);
   const [selectedId, setSelectedId] = useState(null);
   const [search, setSearch] = useState("");
   const [showPatientForm, setShowPatientForm] = useState(false);
@@ -771,6 +786,7 @@ function AppInner({ onRelock }) {
             <HeaderTab label="יומן" icon={CalendarIcon} active={activeTab === "calendar"} onClick={() => { setActiveTab("calendar"); setSelectedId(null); }} />
             <HeaderTab label="סיכום חודשי" icon={FileText} active={activeTab === "summary"} onClick={() => { setActiveTab("summary"); setSelectedId(null); }} />
             <HeaderTab label="סטטיסטיקה" icon={BarChart3} active={activeTab === "stats"} onClick={() => { setActiveTab("stats"); setSelectedId(null); }} />
+            <HeaderTab label="ממתינות לסגירה" icon={ClipboardList} active={activeTab === "pending"} badge={pendingClosuresCount} onClick={() => { setActiveTab("pending"); setSelectedId(null); }} />
           </div>
           <button onClick={() => setShowBackupModal(true)} title="גיבוי ושחזור" style={{ background: "none", border: "none", color: "#fff", opacity: 0.75, cursor: "pointer", display: "flex", padding: 6 }}><HardDrive size={16} /></button>
           <button onClick={() => setShowReminderSettings(true)} title="הגדרות המרפאה (תזכורות, תבניות מסמכים, לוגו)" style={{ background: "none", border: "none", color: "#fff", opacity: 0.75, cursor: "pointer", display: "flex", padding: 6 }}><Settings size={16} /></button>
@@ -884,6 +900,14 @@ function AppInner({ onRelock }) {
               onPickPatient={(id) => { setSelectedId(id); setActiveTab("patients"); }} />
           ) : activeTab === "stats" ? (
             <StatisticsView patients={patients} logoUrl={logoUrl} clinicSettings={clinicSettings} />
+          ) : activeTab === "pending" ? (
+            <PendingClosuresView patients={patients}
+              onPickPatient={(id) => { setSelectedId(id); setActiveTab("patients"); }}
+              onCloseOccurrence={(patientId, occ) => {
+                setSelectedId(patientId); setActiveTab("patients");
+                setEditingSession(null); setPrefillSession({ date: occ.date, time: occ.time, type: occ.type, duration: occ.duration });
+                setForceCancelStatus(false); setShowSessionForm(true);
+              }} />
           ) : selectedPatient ? (
             <PatientDetail
               patient={selectedPatient}
@@ -916,6 +940,7 @@ function AppInner({ onRelock }) {
           <BottomTab label="יומן" icon={CalendarIcon} active={activeTab === "calendar"} onClick={() => { setActiveTab("calendar"); setSelectedId(null); }} />
           <BottomTab label="סיכום" icon={FileText} active={activeTab === "summary"} onClick={() => { setActiveTab("summary"); setSelectedId(null); }} />
           <BottomTab label="סטטיסטיקה" icon={BarChart3} active={activeTab === "stats"} onClick={() => { setActiveTab("stats"); setSelectedId(null); }} />
+          <BottomTab label="ממתינות" icon={ClipboardList} active={activeTab === "pending"} badge={pendingClosuresCount} onClick={() => { setActiveTab("pending"); setSelectedId(null); }} />
         </div>
       </div>
 
@@ -1007,7 +1032,7 @@ function AppInner({ onRelock }) {
   );
 }
 
-function HeaderTab({ label, icon: Icon, active, onClick }) {
+function HeaderTab({ label, icon: Icon, active, onClick, badge }) {
   return (
     <button onClick={onClick} style={{
       display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8,
@@ -1015,16 +1040,19 @@ function HeaderTab({ label, icon: Icon, active, onClick }) {
       cursor: "pointer", fontSize: 14, fontWeight: 600,
     }}>
       <Icon size={15} /> {label}
+      {!!badge && <span style={{ background: COLORS.clay, color: "#fff", borderRadius: 10, fontSize: 11, fontWeight: 700, padding: "1px 6px" }}>{badge}</span>}
     </button>
   );
 }
-function BottomTab({ label, icon: Icon, active, onClick }) {
+function BottomTab({ label, icon: Icon, active, onClick, badge }) {
   return (
     <button onClick={onClick} style={{
       flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 0",
       background: "transparent", border: "none", color: active ? COLORS.primary : COLORS.muted, cursor: "pointer",
+      position: "relative",
     }}>
       <Icon size={20} />
+      {!!badge && <span style={{ position: "absolute", top: 0, right: "28%", background: COLORS.clay, color: "#fff", borderRadius: 10, fontSize: 9, fontWeight: 700, padding: "0 4px", minWidth: 14, textAlign: "center", lineHeight: "14px" }}>{badge}</span>}
       <span style={{ fontSize: 11, fontWeight: 600 }}>{label}</span>
     </button>
   );
@@ -1053,12 +1081,7 @@ function PatientDetail({ patient, onBack, onEdit, onDelete, onAddSession, onAddS
   const t = todayStr();
   const sessions = [...(patient.sessions || [])].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
   const realHistory = sessions.filter((s) => s.status !== "scheduled" || s.date < t);
-  const lookbackStart = patient.createdAt ? patient.createdAt.slice(0, 10) : fmtDate(new Date(new Date().setDate(new Date().getDate() - 365)));
-  const pendingOccurrences = patient.recurring && patient.recurring.enabled
-    ? getOccurrencesInRange(patient, lookbackStart, t)
-        .filter((o) => o.virtual && o.status === "scheduled" && o.date < t)
-        .map((o) => ({ ...o, pendingVirtual: true, id: `v-${o.date}-${o.time}` }))
-    : [];
+  const pendingOccurrences = getPendingOccurrences(patient, t);
   const history = [...realHistory, ...pendingOccurrences].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
   const [showFile, setShowFile] = useState(false);
 
@@ -2602,6 +2625,47 @@ function CalendarPrintModal({ patients, logoUrl, clinicSettings, onClose }) {
 }
 function navBtn() {
   return { width: 30, height: 30, borderRadius: 7, border: `1px solid ${COLORS.border}`, background: COLORS.surface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.primary };
+}
+
+function PendingClosuresView({ patients, onPickPatient, onCloseOccurrence }) {
+  const t = todayStr();
+  const items = useMemo(() => {
+    const list = [];
+    (patients || []).forEach((p) => {
+      getPendingOccurrences(p, t).forEach((o) => list.push({ ...o, patientId: p.id, patientName: p.name }));
+    });
+    return list.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  }, [patients, t]);
+
+  return (
+    <div className="scrollbar" style={{ height: "100%", overflowY: "auto", padding: "20px 28px 80px" }}>
+      <h2 style={{ margin: "0 0 4px", fontSize: 19, fontWeight: 700 }}>פגישות ממתינות לסגירה</h2>
+      <p style={{ fontSize: 13, color: COLORS.muted, marginTop: 0, marginBottom: 20 }}>
+        פגישות מתגלגלות (קבועות) מכל המטופלים, שהתאריך שלהן עבר בלי שסומנו כהתקיימו/בוטלו — מהישנה לחדשה.
+      </p>
+      {items.length === 0 ? (
+        <div style={{ color: COLORS.muted, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+          <CheckCircle2 size={15} color={COLORS.success} /> אין פגישות ממתינות לסגירה — הכל מעודכן.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {items.map((o) => (
+            <div key={o.patientId + "-" + o.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "#FDF4EC", border: `1px solid ${COLORS.clay}55`, borderRadius: 10, padding: "10px 14px", flexWrap: "wrap" }}>
+              <AlertCircle size={16} color={COLORS.clay} />
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <div onClick={() => onPickPatient(o.patientId)} style={{ fontWeight: 700, fontSize: 14, cursor: "pointer", color: COLORS.primary }}>{o.patientName}</div>
+                <div style={{ fontSize: 13, color: COLORS.muted }}>{formatHeDate(o.date)} · {o.time}{o.type ? ` · ${o.type}` : ""}</div>
+              </div>
+              <button onClick={() => onCloseOccurrence(o.patientId, o)}
+                style={{ ...btnPrimary(), width: "auto", padding: "7px 14px", fontSize: 13 }}>
+                עדכון פגישה
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function MonthlySummary({ patients, sumMonth, setSumMonth, onPickPatient }) {

@@ -1,7 +1,7 @@
 // Service Worker בסיסי — נדרש כדי שהדפדפן יאפשר "התקנה" (Add to Home Screen / Install) של האפליקציה.
 // שומר עותק מקומי (cache) של קבצי האפליקציה כדי שתיפתח מהר יותר ותעבוד גם בלי אינטרנט לרגע.
 // כשיוצאת גרסה חדשה של index.html, כדאי לעדכן את מספר הגרסה כאן (CACHE_NAME) כדי שהדפדפן ימשוך את הגרסה החדשה.
-const CACHE_NAME = "ricky-clinic-cache-v2.7";
+const CACHE_NAME = "ricky-clinic-cache-v2.8";
 const ASSETS = ["./", "./index.html", "./sign.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
