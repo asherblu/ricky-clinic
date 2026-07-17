@@ -93,6 +93,11 @@ CHANGELOG (patient-manager.jsx / patient-manager.html — must stay in sync)
      מייצר טקסט עם כל מטופל/ת שיש לו/ה פגישה קבועה פעילה או פגישות ממתינות: createdAt, הגדרת הפגישה הקבועה,
      כמות רשומות session, ורשימת התאריכים המדויקים שנחשבים "ממתינים" (וירטואליים מול רשומות אמיתיות) —
      כדי לאבחן את הפער מול נתונים אמיתיים במקום ניחושים נוספים.
+2.14 המשתמשת דיווחה על תאריכים עתידיים שמסומנים ⚠ בלוח השנה (למשל 19-30 בחודש כשה"היום" הוא ה-17), למרות
+     ששעון המחשב מאושר כתקין — כלומר יש עדיין פער אמיתי בין מה שהדפדפן מחשב ל"עכשיו" לבין הציפייה, וזה לא
+     ניתן לבדיקה מרחוק על מחשב אחר. נוסף ל-buildPendingDiagnosticText גם new Date().toString() ואזור הזמן
+     (Intl.DateTimeFormat) של המכשיר שבו לוחצים על "העתקת נתוני אבחון" — כדי לקבל את שעון הדפדפן בפועל בלי
+     לצטרך לפתוח כלי פיתוח (F12) במחשב הרחוק.
 -->
 <html lang="he" dir="rtl">
 <head>
@@ -255,7 +260,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.13";
+const APP_VERSION = "2.14";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 const DEFAULT_SESSION_DURATION = 60; // minutes — 50 min session + 10 min buffer, editable per session/recurring slot
@@ -2530,7 +2535,14 @@ function navBtn() { return { width: 30, height: 30, borderRadius: 7, border: `1p
 
 function buildPendingDiagnosticText(patients, t) {
   const total = (patients || []).reduce((a, p) => a + getUnresolvedOccurrences(p, t).length, 0);
-  const lines = [`אבחון פגישות ממתינות — נוצר בתאריך ${t}`, `סה"כ פגישות ממתינות שנמצאו: ${total}`, ""];
+  const now = new Date();
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const lines = [
+    `אבחון פגישות ממתינות — נוצר בתאריך ${t}`,
+    `שעון המכשיר (new Date): ${now.toString()}`,
+    `אזור זמן: ${tz} (הפרש מ-UTC בדקות: ${now.getTimezoneOffset()})`,
+    `סה"כ פגישות ממתינות שנמצאו: ${total}`, "",
+  ];
   (patients || []).forEach((p) => {
     const unresolved = getUnresolvedOccurrences(p, t);
     if (unresolved.length === 0 && !(p.recurring && p.recurring.enabled)) return;

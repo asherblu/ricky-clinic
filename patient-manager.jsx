@@ -52,6 +52,8 @@
  *      את הטאב. תוקן גם מקרא שגוי. זהה בדיוק לתיקון בגרסת ה-HTML.
  * 2.13 נוסף כפתור "העתקת נתוני אבחון" בטאב "ממתינות לסגירה" (buildPendingDiagnosticText) לאבחון פער ספירה
  *      שנותר לא מוסבר, מול נתונים אמיתיים במקום ניחושים. זהה בדיוק לתיקון בגרסת ה-HTML.
+ * 2.14 נוסף ל-buildPendingDiagnosticText גם new Date().toString() ואזור הזמן של המכשיר — כדי לקבל את שעון
+ *      הדפדפן בפועל ממחשב מרוחק בלי כלי פיתוח (F12). זהה בדיוק לתיקון בגרסת ה-HTML.
  */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
@@ -185,7 +187,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.13";
+const APP_VERSION = "2.14";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 
@@ -2712,7 +2714,14 @@ function navBtn() {
 
 function buildPendingDiagnosticText(patients, t) {
   const total = (patients || []).reduce((a, p) => a + getUnresolvedOccurrences(p, t).length, 0);
-  const lines = [`אבחון פגישות ממתינות — נוצר בתאריך ${t}`, `סה"כ פגישות ממתינות שנמצאו: ${total}`, ""];
+  const now = new Date();
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const lines = [
+    `אבחון פגישות ממתינות — נוצר בתאריך ${t}`,
+    `שעון המכשיר (new Date): ${now.toString()}`,
+    `אזור זמן: ${tz} (הפרש מ-UTC בדקות: ${now.getTimezoneOffset()})`,
+    `סה"כ פגישות ממתינות שנמצאו: ${total}`, "",
+  ];
   (patients || []).forEach((p) => {
     const unresolved = getUnresolvedOccurrences(p, t);
     if (unresolved.length === 0 && !(p.recurring && p.recurring.enabled)) return;
