@@ -68,6 +68,11 @@ CHANGELOG (patient-manager.jsx / patient-manager.html — must stay in sync)
      שיש פגישה תקועה. כל שורה מציגה שם מטופל/ת + תאריך/שעה, עם כפתור "עדכון פגישה" שקופץ ישר לטופס הסגירה
      הממולא מראש. מספר קטן (badge) ליד שם הטאב מציג כמה פגישות ממתינות. חילוץ הלוגיקה מ-PatientDetail
      לפונקציה משותפת getPendingOccurrences(patient, t) כדי שכרטיס המטופל והטאב החדש לא יסטו זה מזה.
+2.9  תיקון באג בטאב "ממתינות לסגירה": הוא ספר רק פגישות מתגלגלות וירטואליות (patient.recurring), ופספס
+     פגישות אמיתיות שכבר קיימות כרשומה (patient.sessions, למשל שנקבעו ידנית דרך "קביעת פגישה" ולא דרך
+     "פגישה קבועה") שנשארו status=scheduled אחרי שהתאריך עבר — מה שגרם לספירת חסר משמעותית. נוספה
+     getUnresolvedOccurrences(patient, t) שמאחדת את שני המקורות; הטאב וה-badge משתמשים בה כעת. לחיצה על
+     "עדכון פגישה" עבור פגישה אמיתית פותחת אותה לעריכה (לא יוצרת רשומה כפולה כמו שקורה לוירטואליות).
 -->
 <html lang="he" dir="rtl">
 <head>
@@ -230,7 +235,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.8";
+const APP_VERSION = "2.9";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 const DEFAULT_SESSION_DURATION = 60; // minutes — 50 min session + 10 min buffer, editable per session/recurring slot
@@ -260,6 +265,14 @@ function getPendingOccurrences(patient, t) {
   return getOccurrencesInRange(patient, lookbackStart, t)
     .filter((o) => o.virtual && o.status === "scheduled" && o.date < t)
     .map((o) => ({ ...o, pendingVirtual: true, id: `v-${o.date}-${o.time}` }));
+}
+function getUnresolvedOccurrences(patient, t) {
+  // פגישות אמיתיות שנקבעו (למשל דרך "קביעת פגישה" ולא דרך "פגישה קבועה") ונשארו scheduled אחרי שהתאריך עבר —
+  // בנוסף לפגישות המתגלגלות הוירטואליות מ-getPendingOccurrences. שני המקורות יחד = כל מה שממתין לסגירה.
+  const realOverdue = (patient.sessions || [])
+    .filter((s) => s.status === "scheduled" && s.date < t)
+    .map((s) => ({ date: s.date, time: s.time, type: s.type, duration: s.duration, session: s, virtual: false, id: s.id }));
+  return [...realOverdue, ...getPendingOccurrences(patient, t)].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
 }
 function timeToMinutes(t) {
   const [h, m] = (t || "00:00").split(":").map(Number);
@@ -626,7 +639,7 @@ function App({ onRelock, uid: userUid, email }) {
   const [activeTab, setActiveTab] = useState("patients");
   const pendingClosuresCount = useMemo(() => {
     const t = todayStr();
-    return (patients || []).reduce((a, p) => a + getPendingOccurrences(p, t).length, 0);
+    return (patients || []).reduce((a, p) => a + getUnresolvedOccurrences(p, t).length, 0);
   }, [patients]);
   const [selectedId, setSelectedId] = useState(null);
   const [search, setSearch] = useState("");
@@ -942,7 +955,8 @@ function App({ onRelock, uid: userUid, email }) {
               onPickPatient={(id) => { setSelectedId(id); setActiveTab("patients"); }}
               onCloseOccurrence={(patientId, occ) => {
                 setSelectedId(patientId); setActiveTab("patients");
-                setEditingSession(null); setPrefillSession({ date: occ.date, time: occ.time, type: occ.type, duration: occ.duration });
+                if (occ.virtual) { setEditingSession(null); setPrefillSession({ date: occ.date, time: occ.time, type: occ.type, duration: occ.duration }); }
+                else { setEditingSession(occ.session); setPrefillSession(null); }
                 setForceCancelStatus(false); setShowSessionForm(true);
               }} />
           ) : selectedPatient ? (
@@ -2434,7 +2448,7 @@ function PendingClosuresView({ patients, onPickPatient, onCloseOccurrence }) {
   const items = useMemo(() => {
     const list = [];
     (patients || []).forEach((p) => {
-      getPendingOccurrences(p, t).forEach((o) => list.push({ ...o, patientId: p.id, patientName: p.name }));
+      getUnresolvedOccurrences(p, t).forEach((o) => list.push({ ...o, patientId: p.id, patientName: p.name }));
     });
     return list.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
   }, [patients, t]);
@@ -2443,7 +2457,7 @@ function PendingClosuresView({ patients, onPickPatient, onCloseOccurrence }) {
     <div className="scrollbar" style={{ height: "100%", overflowY: "auto", padding: "20px 28px 80px" }}>
       <h2 style={{ margin: "0 0 4px", fontSize: 19, fontWeight: 700 }}>פגישות ממתינות לסגירה</h2>
       <p style={{ fontSize: 13, color: COLORS.muted, marginTop: 0, marginBottom: 20 }}>
-        פגישות מתגלגלות (קבועות) מכל המטופלים, שהתאריך שלהן עבר בלי שסומנו כהתקיימו/בוטלו — מהישנה לחדשה.
+        כל פגישה (קבועה או חד-פעמית) מכל המטופלים, שהתאריך שלה עבר בלי שסומנה כהתקיימה/בוטלה — מהישנה לחדשה.
       </p>
       {items.length === 0 ? (
         <div style={{ color: COLORS.muted, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>

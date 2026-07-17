@@ -37,6 +37,9 @@
  * 2.8  פיצ'ר חדש: טאב "ממתינות לסגירה" (PendingClosuresView) — מרכז את כל הפגישות המתגלגלות שעברו בלי
  *      סימון, מכל המטופלים, למקום אחד, עם badge מספרי ליד שם הטאב. חילוץ getPendingOccurrences(patient, t)
  *      לפונקציה משותפת. זהה בדיוק לתיקון בגרסת ה-HTML.
+ * 2.9  תיקון באג: הטאב ספר רק פגישות מתגלגלות וירטואליות, ופספס פגישות אמיתיות (patient.sessions) שנשארו
+ *      scheduled אחרי שהתאריך עבר. נוספה getUnresolvedOccurrences(patient, t) שמאחדת את שני המקורות.
+ *      זהה בדיוק לתיקון בגרסת ה-HTML.
  */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
@@ -150,7 +153,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.8";
+const APP_VERSION = "2.9";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 
@@ -185,6 +188,12 @@ function getPendingOccurrences(patient, t) {
   return getOccurrencesInRange(patient, lookbackStart, t)
     .filter((o) => o.virtual && o.status === "scheduled" && o.date < t)
     .map((o) => ({ ...o, pendingVirtual: true, id: `v-${o.date}-${o.time}` }));
+}
+function getUnresolvedOccurrences(patient, t) {
+  const realOverdue = (patient.sessions || [])
+    .filter((s) => s.status === "scheduled" && s.date < t)
+    .map((s) => ({ date: s.date, time: s.time, type: s.type, duration: s.duration, session: s, virtual: false, id: s.id }));
+  return [...realOverdue, ...getPendingOccurrences(patient, t)].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
 }
 
 function timeToMinutes(t) {
@@ -526,7 +535,7 @@ function AppInner({ onRelock }) {
   const [activeTab, setActiveTab] = useState("patients");
   const pendingClosuresCount = useMemo(() => {
     const t = todayStr();
-    return (patients || []).reduce((a, p) => a + getPendingOccurrences(p, t).length, 0);
+    return (patients || []).reduce((a, p) => a + getUnresolvedOccurrences(p, t).length, 0);
   }, [patients]);
   const [selectedId, setSelectedId] = useState(null);
   const [search, setSearch] = useState("");
@@ -905,7 +914,8 @@ function AppInner({ onRelock }) {
               onPickPatient={(id) => { setSelectedId(id); setActiveTab("patients"); }}
               onCloseOccurrence={(patientId, occ) => {
                 setSelectedId(patientId); setActiveTab("patients");
-                setEditingSession(null); setPrefillSession({ date: occ.date, time: occ.time, type: occ.type, duration: occ.duration });
+                if (occ.virtual) { setEditingSession(null); setPrefillSession({ date: occ.date, time: occ.time, type: occ.type, duration: occ.duration }); }
+                else { setEditingSession(occ.session); setPrefillSession(null); }
                 setForceCancelStatus(false); setShowSessionForm(true);
               }} />
           ) : selectedPatient ? (
@@ -2632,7 +2642,7 @@ function PendingClosuresView({ patients, onPickPatient, onCloseOccurrence }) {
   const items = useMemo(() => {
     const list = [];
     (patients || []).forEach((p) => {
-      getPendingOccurrences(p, t).forEach((o) => list.push({ ...o, patientId: p.id, patientName: p.name }));
+      getUnresolvedOccurrences(p, t).forEach((o) => list.push({ ...o, patientId: p.id, patientName: p.name }));
     });
     return list.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
   }, [patients, t]);
@@ -2641,7 +2651,7 @@ function PendingClosuresView({ patients, onPickPatient, onCloseOccurrence }) {
     <div className="scrollbar" style={{ height: "100%", overflowY: "auto", padding: "20px 28px 80px" }}>
       <h2 style={{ margin: "0 0 4px", fontSize: 19, fontWeight: 700 }}>פגישות ממתינות לסגירה</h2>
       <p style={{ fontSize: 13, color: COLORS.muted, marginTop: 0, marginBottom: 20 }}>
-        פגישות מתגלגלות (קבועות) מכל המטופלים, שהתאריך שלהן עבר בלי שסומנו כהתקיימו/בוטלו — מהישנה לחדשה.
+        כל פגישה (קבועה או חד-פעמית) מכל המטופלים, שהתאריך שלה עבר בלי שסומנה כהתקיימה/בוטלה — מהישנה לחדשה.
       </p>
       {items.length === 0 ? (
         <div style={{ color: COLORS.muted, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
