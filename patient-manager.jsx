@@ -31,6 +31,9 @@
  * 2.6  תיקון באג משמעותי: פגישות מתגלגלות שהתאריך שלהן עבר בלי שסומנו כהתקיימו/בוטלו נעלמו לצמיתות מכרטיס
  *      המטופל. history ממזג כעת גם pendingOccurrences (וירטואליות, בעבר) עם כפתור "עדכון פגישה" שפותח
  *      את הטופס ממולא מראש. זהה בדיוק לתיקון בגרסת ה-HTML.
+ * 2.7  תיקון באג: todayStr() חישבה "היום" לפי UTC, בעוד fmtDate() (יצירת תאריכי הפגישות המתגלגלות) לפי
+ *      שעון מקומי — פער של עד יום שלם בלילה (00:00-03:00 בישראל) גרם לפגישות מתגלגלות "ליפול בין הכיסאות".
+ *      todayStr הוחלפה ל-fmtDate(new Date()). זהה בדיוק לתיקון בגרסת ה-HTML.
  */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
@@ -61,7 +64,7 @@ async function sha256Hex(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => fmtDate(new Date());
 const pad = (n) => String(n).padStart(2, "0");
 
 function formatHeDate(dateStr) {
@@ -144,7 +147,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.6";
+const APP_VERSION = "2.7";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 

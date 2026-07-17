@@ -58,6 +58,11 @@ CHANGELOG (patient-manager.jsx / patient-manager.html — must stay in sync)
      PatientDetail מחשב גם pendingOccurrences (וירטואליות, status=scheduled, בעבר, מאז patient.createdAt
      או עד שנה אחורה) וממזג אותן ל-history עם עיצוב ייחודי ("פגישה קבועה — טרם עודכנה") וכפתור "עדכון פגישה"
      שפותח את טופס הפגישה עם התאריך/שעה/סוג ממולאים מראש — כדי להפוך אותן לרשומה אמיתית וקבועה.
+2.7  תיקון באג: todayStr() חישבה "היום" לפי UTC (new Date().toISOString()), בעוד ש-fmtDate() (המשמשת
+     ליצירת כל תאריכי הפגישות המתגלגלות) מחשבת לפי שעון מקומי. בישראל זה יצר פער של יום שלם בין 00:00-
+     03:00 בלילה, שגרם לפגישות מתגלגלות "ליפול בין הכיסאות" — לא מוצגות כעתידיות וגם לא כ"טרם עודכנו"
+     בהיסטוריה (התיקון מגרסה 2.6 לא כיסה את המקרה הזה). todayStr הוחלפה ל-fmtDate(new Date()) — מתקן
+     את הבאג בכל 10 המקומות שמשתמשים ב-todayStr (כרטיס מטופל, טופס פגישה, סטטיסטיקה, שם קובץ גיבוי).
 -->
 <html lang="he" dir="rtl">
 <head>
@@ -220,7 +225,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.6";
+const APP_VERSION = "2.7";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 const DEFAULT_SESSION_DURATION = 60; // minutes — 50 min session + 10 min buffer, editable per session/recurring slot
@@ -331,7 +336,7 @@ async function sha256Hex(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => fmtDate(new Date());
 const pad = (n) => String(n).padStart(2, "0");
 function formatHeDate(dateStr) {
   if (!dateStr) return "";
