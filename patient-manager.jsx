@@ -50,6 +50,8 @@
  * 2.12 תיקון תצוגה בלוח השנה: פגישה שעברה בלי סימון (status=scheduled, תאריך<היום) מסומנת עכשיו בכתום עם
  *      ⚠, זהה לעיצוב שכבר קיים בכרטיס המטופל ובטאב "ממתינות לסגירה" — כדי שספירה ויזואלית בלוח השנה תואמת
  *      את הטאב. תוקן גם מקרא שגוי. זהה בדיוק לתיקון בגרסת ה-HTML.
+ * 2.13 נוסף כפתור "העתקת נתוני אבחון" בטאב "ממתינות לסגירה" (buildPendingDiagnosticText) לאבחון פער ספירה
+ *      שנותר לא מוסבר, מול נתונים אמיתיים במקום ניחושים. זהה בדיוק לתיקון בגרסת ה-HTML.
  */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
@@ -183,7 +185,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.12";
+const APP_VERSION = "2.13";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 
@@ -2708,8 +2710,25 @@ function navBtn() {
   return { width: 30, height: 30, borderRadius: 7, border: `1px solid ${COLORS.border}`, background: COLORS.surface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.primary };
 }
 
+function buildPendingDiagnosticText(patients, t) {
+  const total = (patients || []).reduce((a, p) => a + getUnresolvedOccurrences(p, t).length, 0);
+  const lines = [`אבחון פגישות ממתינות — נוצר בתאריך ${t}`, `סה"כ פגישות ממתינות שנמצאו: ${total}`, ""];
+  (patients || []).forEach((p) => {
+    const unresolved = getUnresolvedOccurrences(p, t);
+    if (unresolved.length === 0 && !(p.recurring && p.recurring.enabled)) return;
+    lines.push(`מטופל/ת: ${p.name}`);
+    lines.push(`  נוצר/ה במערכת (createdAt): ${p.createdAt || "לא קיים"}`);
+    lines.push(`  פגישה קבועה: ${p.recurring && p.recurring.enabled ? `כן — יום ${WEEKDAYS[p.recurring.day]}, שעה ${p.recurring.time}` : "לא / כבויה"}`);
+    lines.push(`  סה"כ רשומות session שמורות: ${(p.sessions || []).length}`);
+    lines.push(`  ממתינות לסגירה (${unresolved.length}):`);
+    unresolved.forEach((o) => lines.push(`    - ${o.date} ${o.time} — ${o.virtual ? "וירטואלית (טרם נוצרה רשומה)" : "רשומה אמיתית"}`));
+    lines.push("");
+  });
+  return lines.join("\n");
+}
 function PendingClosuresView({ patients, onPickPatient, onCloseOccurrence }) {
   const t = todayStr();
+  const [copiedDiag, setCopiedDiag] = useState(false);
   const items = useMemo(() => {
     const list = [];
     (patients || []).forEach((p) => {
@@ -2718,9 +2737,21 @@ function PendingClosuresView({ patients, onPickPatient, onCloseOccurrence }) {
     return list.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
   }, [patients, t]);
 
+  async function copyDiagnostic() {
+    const text = buildPendingDiagnosticText(patients, t);
+    try { await navigator.clipboard.writeText(text); setCopiedDiag(true); setTimeout(() => setCopiedDiag(false), 2500); }
+    catch { /* clipboard unavailable */ }
+  }
+
   return (
     <div className="scrollbar" style={{ height: "100%", overflowY: "auto", padding: "20px 28px 80px" }}>
-      <h2 style={{ margin: "0 0 4px", fontSize: 19, fontWeight: 700 }}>פגישות ממתינות לסגירה</h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: 19, fontWeight: 700 }}>פגישות ממתינות לסגירה</h2>
+        <button onClick={copyDiagnostic} title="להעתקה ולשליחה לצורך אבחון תקלה"
+          style={{ ...btnPrimary(), width: "auto", background: "transparent", color: COLORS.primary, border: `1px solid ${COLORS.border}`, padding: "6px 12px", fontSize: 12.5 }}>
+          <Copy size={13} /> {copiedDiag ? "הועתק!" : "העתקת נתוני אבחון"}
+        </button>
+      </div>
       <p style={{ fontSize: 13, color: COLORS.muted, marginTop: 0, marginBottom: 20 }}>
         כל פגישה (קבועה או חד-פעמית) מכל המטופלים, שהתאריך שלה עבר בלי שסומנה כהתקיימה/בוטלה — מהישנה לחדשה.
       </p>
