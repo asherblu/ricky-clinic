@@ -54,6 +54,9 @@
  *      שנותר לא מוסבר, מול נתונים אמיתיים במקום ניחושים. זהה בדיוק לתיקון בגרסת ה-HTML.
  * 2.14 נוסף ל-buildPendingDiagnosticText גם new Date().toString() ואזור הזמן של המכשיר — כדי לקבל את שעון
  *      הדפדפן בפועל ממחשב מרוחק בלי כלי פיתוח (F12). זהה בדיוק לתיקון בגרסת ה-HTML.
+ * 2.15 שורש הבעיה בפער הספירה: getOccurrencesInRange יצרה פגישות וירטואליות גם לתאריכים שקדמו ל-
+ *      patient.createdAt. עכשיו יצירת הפגישות הווירטואליות לא חוזרת אחורה לפני createdAt. זהה בדיוק
+ *      לתיקון בגרסת ה-HTML.
  */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
@@ -187,7 +190,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.14";
+const APP_VERSION = "2.15";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 
@@ -203,7 +206,9 @@ function getOccurrencesInRange(patient, startDate, endDate) {
   });
   if (patient.recurring && patient.recurring.enabled) {
     const explicitDates = new Set(results.map((r) => r.date));
-    let cur = new Date(startDate + "T00:00:00");
+    const createdDate = patient.createdAt ? patient.createdAt.slice(0, 10) : null;
+    const virtualStart = createdDate && createdDate > startDate ? createdDate : startDate;
+    let cur = new Date(virtualStart + "T00:00:00");
     const end = new Date(endDate + "T00:00:00");
     while (cur <= end) {
       if (cur.getDay() === Number(patient.recurring.day)) {
