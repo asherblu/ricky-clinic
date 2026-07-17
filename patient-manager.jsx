@@ -45,6 +45,11 @@
  *      כרטיס המטופל מסמן גם פגישות אמיתיות "טרם עודכנו" באותו עיצוב מודגש. ייצוא היומן (generateICSMultiple)
  *      עבר לקובץ ICS יחיד עם כל הפגישות העתידיות (עד שנה קדימה). זהה בדיוק לתיקון בגרסת ה-HTML (לוקאלי
  *      בלבד — window.storage, ללא Firestore).
+ * 2.11 תוספת קטנה: אחרי "ייצוא כל הפגישות ליומן" נפתח InfoModal עם הנחיה איך לייבא ל-Google Calendar, כי
+ *      פתיחה ישירה של הקובץ שירד עלולה לפתוח Outlook במקום זאת. זהה בדיוק לתיקון בגרסת ה-HTML.
+ * 2.12 תיקון תצוגה בלוח השנה: פגישה שעברה בלי סימון (status=scheduled, תאריך<היום) מסומנת עכשיו בכתום עם
+ *      ⚠, זהה לעיצוב שכבר קיים בכרטיס המטופל ובטאב "ממתינות לסגירה" — כדי שספירה ויזואלית בלוח השנה תואמת
+ *      את הטאב. תוקן גם מקרא שגוי. זהה בדיוק לתיקון בגרסת ה-HTML.
  */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
@@ -178,7 +183,7 @@ const SESSION_NOTE_TEMPLATES = {
   "ייעוץ NLP": "טכניקה שהופעלה בפגישה:\n\nתגובת המטופל/ת:\n\nהמשך מומלץ:\n",
 };
 const ALEF_BET = ["א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ", "ק", "ר", "ש", "ת"];
-const APP_VERSION = "2.10";
+const APP_VERSION = "2.12";
 const APP_RELEASE_DATE = "2026-07-08";
 const APP_CREATORS = "ריקי ואשר בלומנפלד";
 
@@ -2494,6 +2499,7 @@ function CalendarView({ patients, calMonth, setCalMonth, onPickPatient, logoUrl,
   for (let i = 0; i < startOffset; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [showImportHelp, setShowImportHelp] = useState(false);
 
   const monthStart = `${y}-${pad(m + 1)}-01`;
   const monthEnd = `${y}-${pad(m + 1)}-${pad(daysInMonth)}`;
@@ -2547,6 +2553,7 @@ function CalendarView({ patients, calMonth, setCalMonth, onPickPatient, logoUrl,
   function exportAll() {
     if (allUpcoming.length === 0) return;
     generateICSMultiple(allUpcoming.map((s) => ({ patientName: s.patientName, date: s.date, time: s.time, duration: s.duration, notes: s.virtual ? "" : s.session.notes })));
+    setShowImportHelp(true);
   }
 
   return (
@@ -2568,7 +2575,8 @@ function CalendarView({ patients, calMonth, setCalMonth, onPickPatient, logoUrl,
       </div>
 
       <div style={{ display: "flex", gap: 14, marginBottom: 10, fontSize: 12, color: COLORS.muted, flexWrap: "wrap" }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.clay, display: "inline-block" }} /> מתוכננת</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.sage, display: "inline-block" }} /> מתוכננת</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.clay, display: "inline-block" }} /> טרם עודכנה (עברה בלי סימון)</span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.success, display: "inline-block" }} /> התקיימה</span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.danger, display: "inline-block" }} /> בוטלה</span>
       </div>
@@ -2595,14 +2603,16 @@ function CalendarView({ patients, calMonth, setCalMonth, onPickPatient, logoUrl,
                 {items.map((s) => {
                   const cancelled = s.status === "cancelled";
                   const completed = s.status === "completed";
+                  const needsAttention = s.status === "scheduled" && s.date < t;
                   return (
-                    <div key={s.virtual ? "v-" + s.patientId : s.session.id} onClick={() => onPickPatient(s.patientId)} title={s.patientName} style={{
+                    <div key={s.virtual ? "v-" + s.patientId : s.session.id} onClick={() => onPickPatient(s.patientId)} title={s.patientName + (needsAttention ? " — טרם עודכנה" : "")} style={{
                       fontSize: 10.5,
-                      background: cancelled ? COLORS.danger + "18" : completed ? COLORS.success + "1E" : COLORS.sage + "26",
-                      color: cancelled ? COLORS.danger : completed ? COLORS.success : COLORS.primary,
+                      background: cancelled ? COLORS.danger + "18" : completed ? COLORS.success + "1E" : needsAttention ? COLORS.clay + "26" : COLORS.sage + "26",
+                      color: cancelled ? COLORS.danger : completed ? COLORS.success : needsAttention ? COLORS.clay : COLORS.primary,
+                      fontWeight: needsAttention ? 700 : 400,
                       borderRadius: 4, padding: "1px 4px", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                       textDecoration: cancelled ? "line-through" : "none",
-                    }}>{completed ? "✓ " : ""}{s.time} {s.patientName}</div>
+                    }}>{completed ? "✓ " : needsAttention ? "⚠ " : ""}{s.time} {s.patientName}</div>
                   );
                 })}
               </div>
@@ -2634,6 +2644,11 @@ function CalendarView({ patients, calMonth, setCalMonth, onPickPatient, logoUrl,
         </div>
       )}
       {showPrintModal && <CalendarPrintModal patients={patients} logoUrl={logoUrl} clinicSettings={clinicSettings} onClose={() => setShowPrintModal(false)} />}
+      {showImportHelp && (
+        <InfoModal title="הקובץ ירד — איך מכניסים אותו ל-Google Calendar"
+          body={`אל תפתחי את הקובץ שירד בלחיצה כפולה — זה עלול לפתוח את Outlook (או תוכנת יומן אחרת שמוגדרת כברירת מחדל במחשב), לא Google Calendar. במקום זאת: כנסי ל-calendar.google.com בדפדפן ← לחצי על גלגל השיניים למעלה מימין ← "הגדרות" ← "ייבוא וייצוא" בתפריט הצד ← "ייבוא" ← בחרי את הקובץ מתיקיית ההורדות (השם מתחיל ב"פגישות-עתידיות") ← בחרי לאיזה יומן להוסיף ← לחצי "ייבוא". כל הפגישות ייכנסו בבת אחת.`}
+          onClose={() => setShowImportHelp(false)} />
+      )}
     </div>
   );
 }
